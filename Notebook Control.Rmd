@@ -1,0 +1,582 @@
+---
+title: "Analysis - Control Sample"
+output: html_notebook
+---
+
+## Data preprocessing
+### Import data as SpatialExperiment object
+```{r}
+library(SpatialExperiment)
+library(rtracklayer)
+library(lobstr)
+
+spe <- SpatialExperiment::read10xVisium(
+  samples = "control",
+  sample_id = "control",
+  type = c("HDF5", "sparse"),
+  data = "filtered",
+  images = "lowres", 
+  load = TRUE
+)
+
+# continuous variable containing total number of counts for each sample prior to filtering any genes
+spe$sum_umi <- colSums(counts(spe))
+# continuous variable containing the number of genes that have at least 1 count
+spe$sum_gene <- colSums(counts(spe) > 0)
+
+# gene annotation - reference genome GRCm38.p6 http://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_mouse/release_M25/
+gtf <-                                           
+  rtracklayer::import(
+    "gencode.vM23.annotation.gtf"
+  )
+
+gtf <- gtf[gtf$type == "gene"]                   
+gtf$gene_id <- gsub("\\..*", "", gtf$gene_id)    
+names(gtf) <- gtf$gene_id                        
+
+match_genes <- match(rownames(spe), gtf$gene_id) 
+table(is.na(match_genes))
+spe <- spe[!is.na(match_genes), ]                
+match_genes <- match_genes[!is.na(match_genes)]
+mcols(gtf) <- mcols(gtf)[, c("source", "type", "gene_id", "gene_name", "gene_type")]  
+rowRanges(spe) <- gtf[match_genes]               
+
+rowData(spe)$gene_search <- paste0(
+  rowData(spe)$gene_name, "; ", rowData(spe)$gene_id
+)
+```
+
+### Anatomy info and injection site coords
+```{r}
+library(readr)
+
+control_anatomy <- read_csv("control/control_anatomy.csv")
+control_injection_site <- read_csv("control/control_injection_site.csv")
+
+control_ana_inj <- merge(control_anatomy, control_injection_site, by = "Barcode")
+remove(control_anatomy, control_injection_site)
+
+spe$anatomy <- control_ana_inj$anatomy
+spe$inj_site <- control_ana_inj$injection_site
+```
+
+### Distances from injection site
+```{r}
+tissue_positions_list_control <- read_csv("control/outs/spatial/tissue_positions_list.csv", col_names = FALSE)
+names(tissue_positions_list_control) <- c("Barcode", "in_tissue", "arrary_row", "array_col", "pixel_row", "pixel_col")
+tissue_positions_list_control <- subset(tissue_positions_list_control, in_tissue == 1)
+tissue_positions_list_control <- tissue_positions_list_control[,-c(5,6)]
+control_positions <- merge(tissue_positions_list_control, control_ana_inj, by = "Barcode")
+remove(tissue_positions_list_control)
+
+# calcolo la distanza utilizzando le coordinate dello spot centrale del sito di iniezione 
+# x = 44 ; y = 70
+control_positions$distance <- NA
+for(i in 1:nrow(control_positions)){
+  control_positions[i,7] <- sqrt((control_positions[i,3] - 44)^2 + (control_positions[i,4] - 70)^2)
+}
+
+colData(spe)$inj_site_distance <- control_positions$distance
+```
+
+### Quality Control and data filtering ----
+```{r}
+library(scater)
+library(ggspavis)
+
+# identify mitochondrial genes
+is_mito <- grepl("(^MT-)|(^mt-)", rowData(spe)$gene_name)
+table(is_mito)
+
+# calculate per-spot QC metrics and store in colData
+spe <- addPerCellQC(spe, subsets = list(mito = is_mito))
+
+# histogram of numbers of expressed genes
+hist(colData(spe)$detected, breaks = 20)
+
+# Remove mitochondrial genes
+spe <- spe[!is_mito, ]
+
+# we have some NAs in our anatomy info so we need to remove them
+NA_spot <- c(which(is.na(control_positions[,5]))) 
+spe <- spe[,-NA_spot, drop = FALSE]
+
+# remove not expressed genes
+no_expr <- which(rowSums(counts(spe)) == 0)           
+length(no_expr) / nrow(spe) * 100                     
+spe <- spe[-no_expr, , drop = FALSE]
+
+summary(spe$sum)
+
+if (any(spe$sum == 0)) {
+  spots_no_counts <- which(spe$sum == 0)
+  ## Number of spots with no counts
+  print(length(spots_no_counts))
+  ## Percent of spots with no counts
+  print(length(spots_no_counts) / ncol(spe) * 100)
+  spe <- spe[, -spots_no_counts, drop = FALSE]
+}
+
+# Compute the number of 0s values
+zero_x_gene <- c()
+for(i in 1:nrow(c_counts)){
+  zero_x_gene[i] = sum(c_counts[i,] == 0)
+}
+
+no_zero_x_gene <- 2209 - zero_x_gene 
+rowData(spe_c)$zero_x_gene <- zero_x_gene
+rowData(spe_c)$no_zero_x_gene <- no_zero_x_gene
+
+# Check the number of spots in which a gene is expressed and removal of genes expressed in less than 3 spots
+
+control_counts <- assays(spe)$counts
+control_counts <- as.matrix(control_counts)
+
+no_rel <- c()
+n <- 0
+
+for(i in 1:nrow(control_counts)){
+  for(j in 1:ncol(control_counts)){
+    if(control_counts[i,j] != 0){
+      n = n + 1
+    }
+  }
+  if(n <= 2){
+    no_rel = c(no_rel, i)
+  }
+  n = 0
+}
+
+remove(control_counts)
+spe <- spe[-no_rel, , drop = FALSE]
+control_positions <- control_positions[-NA_spot,]
+
+# Normalization
+spe <- scuttle::logNormCounts(spe)
+```
+
+### Batch Correction on anatomy cluster
+```{r}
+library(sva)
+
+control_counts <- assays(spe)$counts
+control_counts <- as.matrix(control_counts)
+
+batch <- c()
+for(i in 1:nrow(control_positions)){
+  if(is.na(control_positions[i,5])){
+    batch[i] <- NA
+  }else{
+    if(control_positions[i,5] == "caudate_putamen"){
+      batch[i] <- 1
+    }else{
+      if(control_positions[i,5] == "cortex"){
+        batch[i] <- 2
+      }else{
+        if(control_positions[i,5] == "thalamus"){
+          batch[i] <- 3
+        }else{
+          if(control_positions[i,5] == "globus_pallidus"){
+            batch[i] <- 4
+          }else{
+            if(control_positions[i,5] == "plexus"){
+              batch[i] <- 5
+            }else{
+              if(control_positions[i,5] == "hypothalamus"){
+                batch[i] <- 6
+              }else{
+                if(control_positions[i,5] == "corpus_callosum"){
+                  batch[i] <- 7
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+control_positions$batch <- batch
+
+BCcounts <- ComBat_seq(counts = control_counts,
+                            batch = batch,
+                            group = NULL,
+                            covar_mod = NULL,
+                            full_mod = FALSE)
+
+assays(spe)$BC <- BCcounts
+
+spe <- logNormCounts(x = spe,
+                           assay.type = "BC",
+                           name = "BClogcounts")
+```
+
+### Reduced dimension: UMAP
+```{r}
+library(scater)
+
+# No corrected data UMAP
+spe <- runUMAP(spe, exprs_values = "logcounts", name = "UMAP_noBC")
+plotReducedDim(object = spe, dimred = "UMAP_noBC", colour_by = "anatomy")
+
+# Batch Corrected data UMAP
+spe <- runUMAP(spe, exprs_values = "BC", name = "UMAP_BC")
+plotReducedDim(object = spe, dimred = "UMAP_BC", colour_by = "anatomy")
+```
+
+### Correlation and p.values
+```{r}
+# BEFORE batch effect removal
+counts_log <- assays(spe)$logcounts
+counts_log <- as.matrix(counts_log)
+distance_c <- spe$inj_site_distance
+
+# Calcolo la correlazione tra la distanza e l'espressione per ogni gene e il relativo p.value
+cor_b <- c()
+pval_b <- c()
+
+for(i in 1:nrow(counts_log)) {
+  zero <- which(counts_log[i,] == 0)
+  if(!isEmpty(zero)){
+    cor_b[i] <- cor(distance_h[-zero], counts_log[i,-zero], method = "spearman")
+    test <- cor.test(distance_h[-zero], counts_log[i,-zero], method = "spearman")
+    pval_b[i] <- test$p.value
+  }else{
+    if(isEmpty(zero)){
+      cor_b[i] <- cor(distance_h, counts_log[i,], method = "spearman")
+      test <- cor.test(distance_h, counts_log[i,], method = "spearman")
+      pval_b[i] <- test$p.value
+    }
+  }
+}
+
+names(cor_b) <- rownames(rowData(spe))
+names(pval_b) <- rownames(rowData(spe))
+
+hist(cor_b)
+hist(abs(cor_b))
+
+# Correzione pvalue
+padjust_bf <- p.adjust(pval_b, method="fdr")
+
+# AFTER batch effect removal
+BC_log <- assays(spe)$BClogcounts
+BC_log <- as.matrix(BC_log)
+cor_a <- c()
+pval_a <- c()
+
+for(i in 1:nrow(BC_log)) {
+  zero <- which(BC_log[i,] == 0)
+  if(!isEmpty(zero)){
+    cor_a[i] <- cor(distance_h[-zero], BC_log[i,-zero], method = "spearman")
+    test <- cor.test(distance_h[-zero], BC_log[i,-zero], method = "spearman")
+    pval_a[i] <- test$p.value
+  }else{
+    if(isEmpty(zero)){
+      cor_a[i] <- cor(distance_h, BC_log[i,], method = "spearman")
+      test <- cor.test(distance_h, BC_log[i,], method = "spearman")
+      pval_a[i] <- test$p.value
+    }
+  }
+}
+
+names(cor_a) <- rownames(rowData(spe))
+names(pval_a) <- rownames(rowData(spe))
+
+hist(cor_a)
+hist(abs(cor_a))
+
+# correzione pvalue
+padjust_af <- p.adjust(pval_a, method="fdr")
+
+# Add informations to spe
+rowData(spe)$cor_before <- cor_b
+rowData(spe)$pvalue_before <- padjust_bf
+rowData(spe)$pvalue_before_NOadj <- pval_b
+
+rowData(spe)$cor_after <- cor_a
+rowData(spe)$pvalue_after <- padjust_af
+rowData(spe)$pvalue_after_NOadj <- pval_a
+```
+
+## Significant genes: correlated and anticorrelated
+
+Extract significant genes
+
+```{r}
+# Before BC
+pval_bf <- rowData(spe_c)$pvalue_before
+cor_bf <- rowData(spe_c)$cor_before
+
+upg_bf <- which(cor_bf >= 0.5 & pval_bf < 0.01)
+dng_bf <- which(cor_bf <= -0.5 & pval_bf < 0.01)
+
+col <- rep("gray", nrow(genes))
+col[upg_bf] <- "lightsalmon"
+col[dng_bf] <- "seagreen1"
+
+gene_name <- rowData(spe_c)$gene_name
+nom <- c(gene_name[dng_bf], gene_name[upg_bf])
+
+plot(x = cor_bf,
+     y = -log(pval_bf),
+     xlab = "Correlation",
+     ylab = "-log p.values",
+     type = "p",
+     col = col,
+     pch = 20,
+     main = "Before batch correction"
+)
+abline(v=-0.5, col="black", lty=2)
+abline(v=0.5, col="black", lty=2)
+abline(h=-log(0.01), col="black", lty=2)
+x = c(cor_bf[dng_bf], cor_bf[upg_bf])
+y = c(pval_bf[dng_bf], pval_bf[upg_bf])
+text(x, -log(y), 
+     labels = nom,
+     cex = 0.4)
+
+```
+
+```{r}
+# After BC
+pval_af <- rowData(spe_c)$pvalue_after
+cor_af <- rowData(spe_c)$cor_after
+
+upg_af <- which(cor_af >= 0.35 & pval_af <= 0.01)
+dng_af <- which(cor_af <= -0.35 & pval_af <= 0.01)
+
+col2 <- rep("gray", nrow(genes))
+col2[upg_af] <- "lightsalmon"
+col2[dng_af] <- "seagreen1"
+
+# vettore nomi
+nom2 <- c(gene_name[dng_af], gene_name[upg_af])
+
+plot(x = cor_af,
+     y = -log(pval_af),
+     xlab = "Correlation",
+     ylab = "-log p.values",
+     type = "p",
+     col = col2,
+     pch = 20,
+     main = "After batch correction"
+)
+abline(v=-0.35, col="black", lty=2)
+abline(v=0.35, col="black", lty=2)
+abline(h=-log(0.01), col="black", lty=2)
+x = c(cor_af[dng_af], cor_af[upg_af])
+y = c(pval_af[dng_af], pval_af[upg_af])
+text(x, -log(y), 
+     labels = nom2,
+     cex = 0.4)
+```
+
+```{r}
+## nostri sig genes
+cor_before <- genes[upg_bf,]
+anticor_before <- genes[dng_bf,]
+
+cor_after <- genes[upg_af,]
+anticor_after <- genes[dng_af,]
+```
+
+\newpage
+## Ground truth genes
+
+```{r}
+library(readr)
+heme_response_downgenes <- read_csv("heme_response_downgenes.csv")
+heme_response_upgenes <- read_csv("heme_response_upgenes.csv")
+```
+
+
+\newpage
+## Baseline
+
+```{r}
+# baseline method
+# zg <- rowData(spe_c)$zero_x_gene
+# rowData(spe_c)$zero_x_gene <- zg
+# no_zero_x_gene <- 2209 - zg
+# rowData(spe_c)$no_zero_x_gene <- no_zero_x_gene
+
+# non0s_x_gene <- rowData(spe_c)$no_zero_x_gene
+
+# before
+logcounts_matrix <- assays(spe_c)$logcounts
+logcounts_matrix <- as.matrix(logcounts_matrix)
+baseline_before <- rowSums(logcounts_matrix)/no_zero_x_gene
+mean_expr_before <- mean(baseline_before)
+
+dist_mean_before <- c()
+for(i in 1:length(baseline_before)){
+  dist_mean_before[i] = abs(baseline_before[i] - mean_expr_before)
+}
+
+rank_baseline_before <- rank(dist_mean_before, ties.method = "min")
+rank_baseline_before <- 16146 - rank_baseline_before
+
+rowData(spe_c)$baseline_before <- baseline_before
+rowData(spe_c)$rank_baseline_before <- rank_baseline_before
+
+# after
+BClogcounts <- assays(spe_c)$BClogcounts
+BClogcounts <- as.matrix(BClogcounts)
+baseline_after <- rowSums(BClogcounts)/no_zero_x_gene
+mean_expr_after <- mean(baseline_after)
+
+dist_mean_after <- c()
+for(i in 1:length(baseline_after)){
+  dist_mean_after[i] = abs(baseline_after[i] - mean_expr_after)
+}
+
+rank_baseline_after <- rank(dist_mean_after, ties.method = "min")
+rank_baseline_after <- 16146 - rank_baseline_after
+
+rowData(spe_c)$baseline_after <- baseline_after
+rowData(spe_c)$rank_baseline_after <- rank_baseline_after
+
+baseline <- genes[,-c(3,4,7,9)]
+
+baseline$baseline_before <- baseline_before
+baseline$rank_baseline_before <- rank_baseline_before
+baseline$baseline_after <- baseline_after
+baseline$rank_baseline_after <- rank_baseline_after
+
+```
+
+
+\newpage
+## SVG
+```{r}
+library(spatialDE)
+
+# preparazione input
+x_cord <- spe$array_row
+y_cord <- spe$array_col
+spots <- colnames(spe)
+sample_info <- matrix(data = NA, nrow = 2310, ncol = 2)
+colnames(sample_info) <- c("x", "y")
+rownames(sample_info) <- spots
+sample_info[,1] <- x_cord
+sample_info[,2] <- y_cord
+sample_info <- as.data.frame(sample_info)
+gene_id <- rowData(spe)$gene_id
+expr_counts <- assays(spe)$counts
+expr_counts <- as.matrix(expr_counts)
+total_counts <- colSums(expr_counts)
+sample_info$total_counts <- total_counts
+coordinates <- sample_info[,-3]
+
+# pipeline svg
+expr_norm <- stabilize(expr_counts)
+expr_resid <- regress_out(expr_norm, sample_info = sample_info)
+results <- spatialDE::run(expr_resid, coordinates = coordinates)
+
+head(results[order(results$qval), ])
+
+de_results <- results[results$qval < 0.01, ] 
+
+SVG_before <- results[,c("g", "LLR", "pval")]
+```
+
+Il pvalue è calcolato sulla statistica LLR, per cui facciamo i rank di questi valori
+```{r}
+cor_pLLR <- cor(SVG_before$LLR, SVG_before$pval)
+
+rank_llr <- rank(SVG_before$LLR, ties.method = "min")
+SVG_before$rank_llr <- 16187 - rank_llr
+rownames(SVG_before) <- c(1:16186)
+```
+
+```{r}
+# AFTER BATCH CORRECTION
+sample_info_BC <- sample_info[,-3]
+BCcounts <- assays(spe)$BCcounts
+BCcounts <- as.matrix(BCcounts)
+total_counts_BC <- colSums(BCcounts)
+sample_info_BC$total_counts <- total_counts_BC
+
+expr_norm_BC <- stabilize(BCcounts)
+expr_resid_BC <- regress_out(expr_norm_BC, sample_info = sample_info_BC)
+results_BC <- spatialDE::run(expr_resid_BC, coordinates = coordinates)
+
+de_results_BC <- results_BC[results_BC$qval < 0.01, ] 
+
+head(results[order(results_BC$qval), ])
+
+SVG_BC <- results_BC[,c("g", "LLR", "pval")]
+rownames(SVG_BC) <- c(1:16186)
+
+rank_llr_BC <- rank(SVG_BC$LLR, ties.method = "min")
+SVG_BC$rank_llr <- 16187 - rank_llr_BC
+rownames(SVG_BC) <- c(1:16186)
+
+SVG <- merge(SVG_before, SVG_BC, by = "gene_id")
+
+# Posizioni dei geni ground truth
+SVG_up <- c()
+up_id <- heme_upgenes$id
+for (i in 1:62) {
+  SVG_up[i] <- which(SVG$g == up_id[i])  
+}
+
+SVG_dn <- c()
+dn_id <- heme_dngenes$id
+for (i in 1:6) {
+  SVG_dn[i] <- which(SVG$g == dn_id[i])  
+}
+```
+
+
+\newpage
+## Methods comparison
+
+```{r}
+par(mar=c(5, 4, 4, 8), xpd=TRUE)
+boxplot(baseline$rank_baseline_before[c(heme_up_pos, heme_dn_pos)], baseline$rank_baseline_after[c(heme_up_pos, heme_dn_pos)],
+        SVG$rank_llr_before[c(heme_up_pos, heme_dn_pos)], SVG$rank_llr_after[c(heme_up_pos, heme_dn_pos)],
+        genes$rank_before[c(heme_up_pos, heme_dn_pos)], genes$rank_after[c(heme_up_pos, heme_dn_pos)],
+        names = c("no ComBat", "ComBat","no ComBat", "ComBat", "no ComBat", "ComBat"),
+        xlab = "Method",
+        ylab = "Rank",
+        cex.axis = 0.8,
+        cex.lab = 0.9,
+        outline = F,
+        ylim = c(16181,1),
+        main = "Rank of ground truth genes - methods compared",
+        col = c("lightgoldenrod1", "lightgoldenrod1", "plum1", "plum1", "turquoise", "turquoise"))
+legend("topleft", inset=c(1.01,0), legend = c("Baseline", "SVG", "Spearman"),
+       fill = c("lightgoldenrod1", "plum1", "turquoise"), cex = 0.7,
+       title = "Methods legend", title.cex = 0.7, bty = "n")
+x <- rep(1:6, each = 68)
+cols <- rep(c("gold2","gold2", "plum", "plum", "turquoise4", "turquoise4"), each = 68)
+y <- c(baseline$rank_baseline_before[c(heme_up_pos, heme_dn_pos)], baseline$rank_baseline_after[c(heme_up_pos, heme_dn_pos)], 
+       SVG$rank_llr_before[c(heme_up_pos, heme_dn_pos)], SVG$rank_llr_after[c(heme_up_pos, heme_dn_pos)],
+       genes$rank_before[c(heme_up_pos, heme_dn_pos)], genes$rank_after[c(heme_up_pos, heme_dn_pos)])
+points(jitter(x),y, col = cols)
+
+
+par(mar=c(5, 4, 4, 8), xpd=TRUE)
+boxplot(SVG$rank_llr_before[c(heme_dn_pos, heme_up_pos)], SVG$rank_llr_after[c(heme_dn_pos, heme_up_pos)],
+        genes$rank_before[c(heme_dn_pos, heme_up_pos)], genes$rank_after[c(heme_dn_pos, heme_up_pos)],
+        names = c("no ComBat", "ComBat", "no ComBat", "ComBat"),
+        xlab = "Method",
+        ylab = "Rank",
+        cex.axis = 0.8,
+        cex.lab = 0.9,
+        outline = F,
+        ylim = c(15200,1),
+        main = "Rank of ground truth genes - methods compared",
+        col = c("plum1", "plum1", "turquoise3", "turquoise3"))
+legend("topleft", inset=c(1.01,0), legend = c("SVG", "Spearman"),
+       fill = c("plum1", "turquoise3"), cex = 0.7,
+       title = "Methods legend", title.cex = 0.7, bty = "n")
+x <- rep(1:4, each = 68)
+cols <- rep(c("plum", "plum", "turquoise4", "turquoise4"), each = 68)
+y <- c(SVG$rank_llr_before[c(heme_up_pos, heme_dn_pos)], SVG$rank_llr_after[c(heme_up_pos, heme_dn_pos)],
+       genes$rank_before[c(heme_up_pos, heme_dn_pos)], genes$rank_after[c(heme_up_pos, heme_dn_pos)])
+points(jitter(x),y, col = cols)
+```
+
