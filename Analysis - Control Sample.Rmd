@@ -4,7 +4,9 @@ output: html_notebook
 ---
 
 ## Data preprocessing
+
 ### Import data as SpatialExperiment object
+
 ```{r}
 library(SpatialExperiment)
 library(rtracklayer)
@@ -46,7 +48,9 @@ rowData(spe)$gene_search <- paste0(
 )
 ```
 
+
 ### Anatomy info and injection site coords
+
 ```{r}
 library(readr)
 
@@ -60,7 +64,9 @@ spe$anatomy <- control_ana_inj$anatomy
 spe$inj_site <- control_ana_inj$injection_site
 ```
 
+
 ### Distances from injection site
+
 ```{r}
 tissue_positions_list_control <- read_csv("control/outs/spatial/tissue_positions_list.csv", col_names = FALSE)
 names(tissue_positions_list_control) <- c("Barcode", "in_tissue", "arrary_row", "array_col", "pixel_row", "pixel_col")
@@ -79,7 +85,9 @@ for(i in 1:nrow(control_positions)){
 colData(spe)$inj_site_distance <- control_positions$distance
 ```
 
-### Quality Control and data filtering ----
+
+### Quality Control and data filtering 
+
 ```{r}
 library(scater)
 library(ggspavis)
@@ -155,7 +163,9 @@ control_positions <- control_positions[-NA_spot,]
 spe <- scuttle::logNormCounts(spe)
 ```
 
+
 ### Batch Correction on anatomy cluster
+
 ```{r}
 library(sva)
 
@@ -211,7 +221,9 @@ spe <- logNormCounts(x = spe,
                            name = "BClogcounts")
 ```
 
+
 ### Reduced dimension: UMAP
+
 ```{r}
 library(scater)
 
@@ -224,7 +236,9 @@ spe <- runUMAP(spe, exprs_values = "BC", name = "UMAP_BC")
 plotReducedDim(object = spe, dimred = "UMAP_BC", colour_by = "anatomy")
 ```
 
+
 ### Correlation and p.values
+
 ```{r}
 # BEFORE batch effect removal
 counts_log <- assays(spe)$logcounts
@@ -299,9 +313,10 @@ rowData(spe)$pvalue_after <- padjust_af
 rowData(spe)$pvalue_after_NOadj <- pval_a
 ```
 
+
 ## Significant genes: correlated and anticorrelated
 
-Extract significant genes
+# Extract significant genes
 
 ```{r}
 # Before BC
@@ -390,8 +405,8 @@ heme_response_downgenes <- read_csv("heme_response_downgenes.csv")
 heme_response_upgenes <- read_csv("heme_response_upgenes.csv")
 ```
 
-
 \newpage
+
 ## Baseline
 
 ```{r}
@@ -445,10 +460,10 @@ baseline$baseline_after <- baseline_after
 baseline$rank_baseline_after <- rank_baseline_after
 
 ```
-
-
 \newpage
+
 ## SVG
+
 ```{r}
 library(spatialDE)
 
@@ -482,6 +497,7 @@ SVG_before <- results[,c("g", "LLR", "pval")]
 ```
 
 Il pvalue è calcolato sulla statistica LLR, per cui facciamo i rank di questi valori
+
 ```{r}
 cor_pLLR <- cor(SVG_before$LLR, SVG_before$pval)
 
@@ -529,8 +545,8 @@ for (i in 1:6) {
 }
 ```
 
-
 \newpage
+
 ## Methods comparison
 
 ```{r}
