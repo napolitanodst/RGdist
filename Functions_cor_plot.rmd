@@ -1,0 +1,87 @@
+---
+title: "RGDIST"
+output: html_notebook
+---
+
+#### Correzione statistica: 
+
+Considerare come un unica popolazione gli spot che si trovano alla stessa distanza sull'array (vedi unique(distanze)).
+
+```{r}
+# Input data
+
+distanze <- spots$distance
+BClogcounts <- assays(spe)$BClogcounts #matrice counts normalizzati dopo Batch Correction
+expr <- c()
+vett_cor <- c()
+vett_p <- c()
+
+```
+
+
+```{r}
+
+# Funzione che prende in input un gene (per ora solo ensemble ID) e restituisce il coefficiente di correlazione di spearman e il relativo p-value (non corretto)
+
+cor_pvalue <- function(gene_id){
+ 
+  for (i in 1:length(unique(distanze))){  #con unique() selezioniamo i valori unici delle distanze, la lunghezza indica quanti valori unici di distanza ci sono.
+  index_dist = which(unique(distanze)[i] == distanze) #selezioniamo per iesimo valore di distanza gli indici degli spot che hanno quel valore di distanza. 
+  expr[i] = mean(BClogcounts[gene_id,index_dist]) #
+}
+
+vett_cor = cor(unique(distanze)[expr>0], expr[expr>0], method = "spearman")
+vett_p <- cor.test(unique(distanze)[expr>0], expr[expr>0], method = "spearman")$p.value
+
+return(list(vett_cor, vett_p)) # sistemare output per renderlo chiaro
+   
+}
+```
+
+
+```{r}
+
+# Funzione per plottare il grafico distanza-espressione di un gene dato in input (per ora solo ensemble ID)
+
+plot_dist_expr <- function(gene_id){
+  expr <- c()
+
+for (i in 1:length(unique(distanze))){
+  index_dist = which(unique(distanze)[i] == distanze) # indici delle distanze uguali
+  expr[i] = mean(BClogcounts[gene_id, index_dist]) 
+}
+
+plot(unique(distanze)[expr>0], expr[expr>0],
+     xlab = "Distance",
+     ylab = "Expression",
+     main = rowData(spe)$gene_name[rowData(spe)$gene_id == j])
+
+}
+
+## NB: scrivi ciclo in cui gene_id = indice ciclo esterno
+
+```
+
+
+
+Abbiamo 414 sono distanze possibili dal sito di iniezione (length(unique(distanze)))
+
+Calcolare meadia di espressione per gli spot con la stessa distanza:
+
+DA COMPLETARE
+
+
+
+
+
+Calcolare le correlazioni e i relativi p.value 
+
+```{r}
+
+correlations <- c()
+pvalues <- c()
+
+# DA COMPLETARE
+# impostare un ciclo for innestato con gene_id come indice esterno e che richiami nel ciclo interno la nuova funzione cor_pvalue
+
+```
