@@ -20,7 +20,7 @@ spe$rings15 <- rings
 # La matrice è troppo grande per cui è necessario lavorare in parallelo
 library(parallel)
 
-# Il mio pc ha 12 CPU, usandone 10 il calcolo si riduce a meno di 5 minuti.
+# Il mio pc ha 12 CPU, usandone 10 il calcolo si riduce a 1.62014 mins.
 num_cores <- 10
 counts_matrix <- as.matrix(assays(spe)$counts)
 
@@ -55,12 +55,22 @@ calculate_gene_ring_expr_parallel <- function(gene_groups, counts_matrix, rings)
   
   gene_ring_expr_values <- parLapply(cluster, gene_groups, function(gene_indices) {
     gene_ring_expr_values <- lapply(gene_indices, function(gene_id) {
-      gene_ring_expr_parallel(gene_id, counts_matrix, rings)
+      # Filtra i geni con meno di tre counts nella matrice originale
+      if (sum(counts_matrix[gene_id, ] >= 3) >= 3) {
+        # Calcola l'espressione media dei geni per ogni ring solo se soddisfa il filtro dei conteggi minimi
+        gene_ring_expr_parallel(gene_id, counts_matrix, rings)
+      } else {
+        rep(0, length(unique(rings)))  # Se non soddisfa il filtro, restituisci un vettore di zeri
+      }
     })
     return(gene_ring_expr_values)
   })
   stopCluster(cluster)
-  return(unlist(gene_ring_expr_values))
+  
+  # Unisci i risultati in un'unica lista
+  gene_ring_expr_values <- unlist(gene_ring_expr_values)
+  
+  return(gene_ring_expr_values)
 }
 
 # Calcolo l'espressione media dei geni per ogni ring in parallelo
