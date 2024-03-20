@@ -56,7 +56,7 @@ calculate_gene_ring_expr_parallel <- function(gene_groups, counts_matrix, rings)
   gene_ring_expr_values <- parLapply(cluster, gene_groups, function(gene_indices) {
     gene_ring_expr_values <- lapply(gene_indices, function(gene_id) {
       # Filtra i geni con meno di tre counts nella matrice originale
-      if (sum(counts_matrix[gene_id, ] >= 3) >= 3) {
+      if (sum(counts_matrix[gene_id, ] != 0) >= 3) {
         # Calcola l'espressione media dei geni per ogni ring solo se soddisfa il filtro dei conteggi minimi
         gene_ring_expr_parallel(gene_id, counts_matrix, rings)
       } else {
