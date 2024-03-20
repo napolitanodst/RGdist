@@ -25,7 +25,7 @@ num_cores <- 10
 counts_matrix <- as.matrix(assays(spe)$counts)
 
 # Divido gli indici dei geni in gruppi per parallelizzazione
-gene_groups <- split(1:nrow(counts_matrix), 1:nrow(counts_matrix) %% num_cores)
+gene_groups <- split(1:nrow(counts_matrix), rep(1:num_cores, each = ceiling(nrow(counts_matrix) / num_cores))[1:nrow(counts_matrix)])
 
 # Funzione per calcolare l'espressione media dei geni per ogni ring
 gene_ring_expr_parallel <- function(gene_id, counts_matrix, rings) {
