@@ -48,7 +48,7 @@ spe$sum_gene <- colSums(counts(spe) > 0)
 Reference genome alignment 
 
 ```{r}
-# gene annotation - reference genome GRCm38.p6 http://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_mouse/release_M25/
+# gene annotation - reference genome GRCm38.p6 http://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_mouse/release_M23/
 gtf <-                                           
   rtracklayer::import(
     "C:/Users/mason/OneDrive/Desktop/RGDIST/RGDIST 2.0/Control/gencode.vM23.annotation.gtf"
