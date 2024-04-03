@@ -1,4 +1,5 @@
 library(SpatialExperiment)
+load("spe-spots.RData")
 
 # How many rings?
 hist(spots$distance,
@@ -10,9 +11,7 @@ hist(spots$distance,
 
 # 15 rings
 rings <- .bincode(spots$distance, c(seq(from = -1, to = 2967, by = 200), Inf))
-
 spots$rings <- rings
-spe$rings15 <- rings
 
 
 #First of all, ripetere tutte le analisi utilizzando come prova i 15 rings. Se i risultati sono buoni, bisognerà capire qual è l'ampiezza ottimale per i rings (non possiamo deciderlo arbitrariamente senza validare).
@@ -20,7 +19,7 @@ spe$rings15 <- rings
 # La matrice è troppo grande per cui è necessario lavorare in parallelo
 library(parallel)
 
-# Il mio pc ha 12 CPU, usandone 10 il calcolo si riduce a 1.62014 mins.
+# Con 10 cpu il calcolo si riduce a 1.62014 mins.
 num_cores <- 10
 counts_matrix <- as.matrix(assays(spe)$counts)
 
@@ -51,7 +50,7 @@ calculate_gene_ring_expr_parallel <- function(gene_groups, counts_matrix, rings)
   cluster <- makeCluster(num_cores)
   
   # Esporto la funzione e altre variabili necessarie nell'ambiente di esecuzione parallela
-  clusterExport(cluster, c("gene_ring_expr_parallel", "counts_matrix", "rings", "spe"))
+  clusterExport(cluster, c("gene_ring_expr_parallel", "counts_matrix", "rings"))
   
   gene_ring_expr_values <- parLapply(cluster, gene_groups, function(gene_indices) {
     gene_ring_expr_values <- lapply(gene_indices, function(gene_id) {
@@ -74,7 +73,7 @@ calculate_gene_ring_expr_parallel <- function(gene_groups, counts_matrix, rings)
 }
 
 # Calcolo l'espressione media dei geni per ogni ring in parallelo
-gene_ring_expr_values <- calculate_gene_ring_expr_parallel(gene_groups, counts_matrix, spe$rings15)
+gene_ring_expr_values <- calculate_gene_ring_expr_parallel(gene_groups, counts_matrix, rings)
 
 
 # Costruisco la matrice matrice_rings
