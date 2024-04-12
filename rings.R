@@ -1,5 +1,12 @@
+
+## requirements:
+# BiocManager::install("SpatialExperiment")
+
+config <- read.table("config.txt")[,2]
+names(config) <- read.table("config.txt")[,1]
+
 library(SpatialExperiment)
-load("spe-spots.RData")
+load(file.path(config["input_path"], "spe-spots.RData"))
 
 # How many rings?
 hist(spots$distance,
