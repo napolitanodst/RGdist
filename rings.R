@@ -28,7 +28,6 @@ library(parallel)
 
 # Con 10 cpu il calcolo si riduce a 1.62014 mins.
 num_cores <- 10
-counts_matrix <- as.matrix(assays(spe)$counts)
 
 # Divido gli indici dei geni in gruppi per parallelizzazione
 gene_groups <- split(1:nrow(counts_matrix), rep(1:num_cores, each = ceiling(nrow(counts_matrix) / num_cores))[1:nrow(counts_matrix)])
