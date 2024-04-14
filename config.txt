@@ -1,1 +1,2 @@
 input_path  /Users/francesco/datapool/git/rgdist
+num_cores 5
