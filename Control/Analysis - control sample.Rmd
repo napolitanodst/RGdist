@@ -24,7 +24,7 @@ spe$sum_umi <- colSums(counts(spe))
 # continuous variable containing the number of genes that have at least 1 count
 spe$sum_gene <- colSums(counts(spe) > 0)
 
-# gene annotation - reference genome GRCm38.p6 http://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_mouse/release_M25/
+# gene annotation - reference genome GRCm38.p6 http://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_mouse/release_M23/
 gtf <-                                           
   rtracklayer::import(
     "gencode.vM23.annotation.gtf"
