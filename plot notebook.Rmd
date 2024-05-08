@@ -1,0 +1,260 @@
+---
+title: "Plot"
+author: "Felicita Pia Masone"
+output: html_notebook
+---
+
+```{r warning=FALSE, include=FALSE}
+library(ggplot2)
+library(spatialLIBD)
+library(tidyverse)
+```
+
+# Spatial plot
+
+Spatial transcriptomic data include coordinates that allow us to associate expression values with the positions in which they are detected. We can exploit this spatial information to visualize gene expression across the tissue. To create this spatial plot, we can use two functions from the `spatialLIBD` package.
+
+> `vis_gene`: this function visualizes the **gene expression** stored in `assays(spe)` or any **continuous variable** stored in `colData(spe)` for one given sample at the spot-level using the histology information on the background.
+
+> `vis_clus`: this function visualizes the clusters or any **discrete variable** stored in `colData(spe)` for one given sample at the spot-level using the histology information on the background.
+
+```{r}
+# Genes are stored in rowData(spe)
+colnames(rowData(spe))
+```
+
+
+To create the plot, we need either the gene_id or the gene_search. For instance, we can visualize the spatial expression of the Il33 gene.
+
+```{r}
+# A method to select something using the tidyverse package and the pipe operator (|>)
+il33 <- as.data.frame(rowData(spe)) |> 
+  filter(gene_name == "Il33") |>
+  select(gene_id, gene_search)
+
+il33$gene_id
+il33$gene_search
+
+```
+
+```{r}
+# We can select the gene_id using the $ operator on rowData(spe)
+rowData(spe)$gene_id[rowData(spe)$gene_name == "Il33"]
+rowData(spe)$gene_search[rowData(spe)$gene_name == "Il33"]
+```
+
+```{r}
+vis_gene(
+  spe,
+  sampleid = "heme_1000",
+  geneid = rowData(spe)$gene_id[rowData(spe)$gene_name == "Il33"],
+  spatial = TRUE,  # logical indicating whether to include the histology layer
+  assayname = "logcounts",
+  viridis = TRUE, # logical whether to use the color-blind friendly palette
+  alpha = 1,
+  point_size = 2
+)
+```
+
+```{r}
+colnames(colData(spe))
+```
+
+Here's an example of plotting a continuous variable stored in colData(spe).
+```{r}
+# In this case the distance is a continuous variable because of the way we computed it.
+vis_gene(
+  spe,
+  sampleid = "heme_1000",
+  geneid = "inj_site_distance",
+  spatial = TRUE,  # logical indicating whether to include the histology layer
+  assayname = "logcounts",
+  viridis = TRUE, # logical whether to use the color-blind friendly palette
+  alpha = 1,
+  point_size = 2
+)
+
+# Other continuous variables include some QC metrics stored in colData(spe) after quality control, such as the proportions of mitochondrial reads per spot.
+vis_gene(
+  spe,
+  sampleid = "heme_1000",
+  geneid = "subsets_mito_percent",
+  spatial = TRUE,  # logical indicating whether to include the histology layer
+  assayname = "logcounts",
+  viridis = TRUE, # logical whether to use the color-blind friendly palette
+  alpha = 1,
+  point_size = 2
+)
+```
+
+Here's an example of visualizing clusters or discrete variables.
+
+```{r}
+colnames(colData(spe))
+```
+
+```{r}
+vis_clus(
+  spe,
+  sampleid = "heme_1000",
+  clustervar = "anatomy",
+  spatial = TRUE,
+  image_id = "lowres",
+  alpha = 1,
+  point_size = 2
+) 
+
+vis_clus(
+  spe,
+  sampleid = "heme_1000",
+  clustervar = "inj_site",
+  spatial = TRUE,
+  image_id = "lowres",
+  alpha = 1,
+  point_size = 2
+) 
+
+```
+
+We can observe that the plots are somewhat distorted; this is due to the aspect ratio not being maintained. Initially, I assumed that the aspect ratio should be 1, but it appears that the image provided by the dataset is not a perfect square. Upon analyzing the code of the functions vis_clus and vis_gene, we can see that the image is imported as follows: 
+```{r}
+img <- SpatialExperiment::imgRaster(spe, sample_id = "heme_1000", 
+                                    image_id = "lowres")
+```
+
+`img` is a raster object, and we can see its dimensions, which represent the actual aspect ratio we should use for plotting.
+```{r}
+dim(img)
+```
+
+To properly resize the plot, we can add the following line after the function call:
+```{r eval=FALSE, include=FALSE}
++ theme(aspect.ratio = 600/531,
+          legend.position = "right",
+          legend.key.size = unit(0.5, 'cm'))
+```
+
+```{r}
+vis_gene(
+  spe,
+  sampleid = "heme_1000",
+  geneid = rowData(spe)$gene_id[rowData(spe)$gene_name == "Il33"],
+  spatial = TRUE,  
+  assayname = "logcounts",
+  viridis = TRUE, 
+  alpha = 1,
+  point_size = 2
+) + theme(aspect.ratio = 600/531,
+          legend.position = "right",
+          legend.key.size = unit(0.5, 'cm'))
+
+
+```
+
+# Boxplot
+
+Let's prepare the data
+
+```{r, warning=FALSE, include=FALSE}
+# ground truth genes
+library(readr)
+heme_response_downgenes <- read_csv("../RGDIST/RGDIST 2.0/Control/heme_response_downgenes.csv")
+heme_response_upgenes <- read_csv("../RGDIST/RGDIST 2.0/Control/heme_response_upgenes.csv")
+
+## down genes ----
+dngenes_names <- heme_response_downgenes$gene_name
+heme_dn_position <- c()
+for(i in 1:nrow(heme_response_downgenes)){
+  heme_dn_position[i] = which(rowData(spe)$gene_name == dngenes_names[i])
+}
+
+## up genes ----
+upgenes_names <- heme_response_upgenes$gene_name
+heme_up_position <- c()
+for(i in 1:nrow(heme_response_upgenes)){
+  heme_up_position[i] = which(rowData(spe)$gene_name == upgenes_names[i])
+}
+
+RGdist_rank_before <- rowData(spe)$rank_before[c(heme_up_position, heme_dn_position)]
+RGdist_rank_after <- rowData(spe)$rank_after[c(heme_up_position, heme_dn_position)]
+
+# CHECK SCRIPTS "baseline.R" and "SVG.R"
+
+svg_before <- SVG$rank_llr_before[c(heme_dn_position, heme_up_position)]
+svg_after <- SVG$rank_llr_after[c(heme_dn_position, heme_up_position)]
+
+baseline_before <- baseline$rank_baseline_before[c(heme_dn_position, heme_up_position)]
+baseline_after <- baseline$rank_baseline_after[c(heme_dn_position, heme_up_position)]
+```
+
+
+We can make the boxplot using either the `graphics` package or the `ggplot2`one. With `graphics`:
+```{r}
+par(mar=c(5, 4, 4, 8), xpd=TRUE)
+
+boxplot(baseline_before, baseline_after,
+        svg_before, svg_after,
+        RGdist_rank_before, RGdist_rank_after,
+        names = rep(c("comBat", "No comBat"), each = 3),
+        xlab = "Method",
+        ylab = "Rank",
+        cex.axis = 0.8,
+        cex.lab = 0.9,
+        outline = F,
+        # ylim = c(16150,1),
+        main = "Rank of ground truth genes - RGdist vs ",
+        col = rep(c("lightgoldenrod1", "plum1", "turquoise"), each = 2))
+
+legend("topright", legend = c("Baseline", "spatialDE", "RGdist"),
+       fill = c("lightgoldenrod1", "plum1", "turquoise"), cex = 0.7,
+       title = "Methods legend", title.cex = 0.7, bty = "n")
+
+x <- rep(1:6, each = 68)
+cols <- rep(c("gold2", "plum", "turquoise4"), each = 136)
+y <- c(baseline_before, baseline_after, 
+       svg_before, svg_after,
+       RGdist_rank_before, RGdist_rank_after)
+points(jitter(x),y, col = cols)
+```
+
+
+With `ggplot2`:
+```{r}
+
+# prepare the data frame for plotting
+bxpl <- data.frame(name = c(rep("Baseline_before",68), rep("Baseline_after",68), rep("SVG_before",68), 
+                            rep("SVG_after",68), rep("RGdist_before", 68), rep("RGdist_after",68)),
+                   value=c(baseline_before, baseline_after, svg_before, svg_after, RGdist_rank_before, RGdist_rank_after))
+
+bxpl$group <- factor(bxpl$name,     # Reorder factor levels
+                    c("Baseline_before", "SVG_before", "RGdist_before", "Baseline_after", "SVG_after", "RGdist_after"))
+
+
+bxpl$color <- bxpl$group
+bxpl$Method <- factor(c(rep("Baseline", 136), rep("SpatialDE", 136), rep("RGdist", 136)))
+bxpl$med <- factor(c(rep(median(baseline_before), 68), rep(median(svg_before), 68), rep(median(RGdist_rank_before), 68),
+              rep(median(baseline_after), 68), rep(median(svg_after), 68), rep(median(RGdist_rank_after), 68)))
+
+ggplot(data=bxpl, aes(x=group, y=value, fill=Method)) +
+  theme(aspect.ratio = 1) + 
+  scale_fill_brewer(palette="Accent") + 
+  theme_gray() +
+  scale_y_reverse() +
+  geom_boxplot(outlier.shape = NA, notch = F, lwd = 1) +
+  geom_jitter(color=c(rep("#056752", 136), rep("#A24E1C", 136), rep("#44386D", 136)),
+              alpha=0.6, width = 0.3) +
+  theme(legend.position = "none") +
+  scale_x_discrete(labels = c("no ComBat", "no ComBat", "no ComBat", "ComBat", "ComBat", "ComBat")) +
+  labs(title = "Rank of ground truth genes - methods compared") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold")) +
+  xlab("") + ylab("Rank") +
+  theme(axis.text.y = element_text(angle = 90),
+        axis.text.x = element_blank(),
+        axis.ticks.x = element_line(),
+        axis.title = element_text(face="bold")) 
+
+
+```
+
+
+
