@@ -158,8 +158,8 @@ Let's prepare the data
 ```{r, warning=FALSE, include=FALSE}
 # ground truth genes
 library(readr)
-heme_response_downgenes <- read_csv("../RGDIST/RGDIST 2.0/Control/heme_response_downgenes.csv")
-heme_response_upgenes <- read_csv("../RGDIST/RGDIST 2.0/Control/heme_response_upgenes.csv")
+heme_response_downgenes <- read_csv("heme_response_downgenes.csv")
+heme_response_upgenes <- read_csv("Control/heme_response_upgenes.csv")
 
 ## down genes ----
 dngenes_names <- heme_response_downgenes$gene_name
