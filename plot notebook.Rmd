@@ -128,7 +128,8 @@ dim(img)
 ```
 
 To properly resize the plot, we can add the following line after the function call:
-```{r eval=FALSE, include=FALSE}
+```{r}
+# don't run this chunk
 + theme(aspect.ratio = 600/531,
           legend.position = "right",
           legend.key.size = unit(0.5, 'cm'))
