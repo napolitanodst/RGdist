@@ -100,9 +100,9 @@ spe$inj_site <- spots$injection_site
 
 ```{r}
 # calcolo la distanza utilizzando le coordinate dello spot centrale del sito di iniezione 
-# x = 52 ; y = 70 (array_row, array_col)
-# spots[which(spots$arrary_row == 52 & spots$array_col == 70) , c(5,6)]
-# pixel_row = 5118 ; pixel_col = 3867
+# array_row = 48 ; array_col = 64
+# spots[which(spots$arrary_row == 48 & spots$array_col == 64) , c(5,6)]
+# pixel_row = 4828 ; pixel_col = 3620
 spots$distance <- NA
 
 for(i in 1:nrow(spots)){
